@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Amnezia VPN Control Panel</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">
+            <span class="brand-logo">🛡️</span>
+            <div>
+                <div class="brand-title">Amnezia VPN Control Panel</div>
+                <div class="brand-sub">Мониторинг VPN-контейнеров, клиентов и MTProto-прокси</div>
+            </div>
+        </div>
+        <div class="topbar-actions">
+            <label class="switch-label" title="Автообновление статуса и пинга">
+                <input type="checkbox" id="autoRefresh" checked>
+                <span>Автообновление (15с)</span>
+            </label>
+            <button class="btn btn-primary" id="addServerBtn">➕ Добавить сервер</button>
+        </div>
+    </header>
+
+    <main class="layout">
+        <section class="kpi-row" id="kpiRow"></section>
+
+        <section class="dashboard-head">
+            <h2>Серверы</h2>
+            <button class="btn btn-ghost" id="refreshAllBtn">↻ Обновить всё</button>
+        </section>
+
+        <section class="dashboard" id="dashboard">
+            <div class="muted">Загрузка списка серверов…</div>
+        </section>
+
+        <section class="detail" id="detail" hidden></section>
+    </main>
+
+    <!-- Add / edit server modal -->
+    <div id="serverModal" class="modal hidden">
+        <div class="modal-backdrop" data-close-server="1"></div>
+        <div class="modal-dialog">
+            <div class="modal-head">
+                <h3 id="serverModalTitle">Добавить сервер</h3>
+                <button class="modal-close" id="serverModalClose" aria-label="Закрыть">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-grid">
+                    <div class="form-group full">
+                        <label>Название (необязательно)</label>
+                        <input type="text" id="serverName" placeholder="Мой сервер">
+                    </div>
+                    <div class="form-group full">
+                        <label>Server IP / Hostname</label>
+                        <div class="input-row">
+                            <input type="text" id="serverAddress" placeholder="217.60.36.226">
+                            <button type="button" class="btn btn-ghost" id="pingPreviewBtn">Проверить пинг</button>
+                        </div>
+                        <div class="ping-preview" id="pingPreview"></div>
+                    </div>
+                    <div class="form-group">
+                        <label>SSH порт</label>
+                        <input type="number" id="serverPort" value="22" min="1" max="65535">
+                    </div>
+                    <div class="form-group">
+                        <label>Пользователь</label>
+                        <input type="text" id="serverUsername" placeholder="root">
+                    </div>
+                    <div class="form-group full">
+                        <label>Способ аутентификации</label>
+                        <select id="serverAuthType">
+                            <option value="password">Пароль</option>
+                            <option value="key">SSH-ключ</option>
+                        </select>
+                    </div>
+                    <div class="form-group full" id="passwordGroup">
+                        <label>Пароль</label>
+                        <input type="password" id="serverPassword" placeholder="Пароль SSH">
+                    </div>
+                    <div class="form-group full hidden" id="keyGroup">
+                        <label>Приватный ключ</label>
+                        <textarea id="serverPrivateKey" rows="5" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+                    </div>
+                    <div class="form-group full hidden" id="passphraseGroup">
+                        <label>Пароль ключа (необязательно)</label>
+                        <input type="password" id="serverPassphrase" placeholder="">
+                    </div>
+                </div>
+                <div class="form-message" id="formMessage"></div>
+            </div>
+            <div class="modal-foot">
+                <button class="btn btn-ghost" id="serverModalCancel">Отмена</button>
+                <button class="btn btn-primary" id="serverModalSave">Сохранить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Client activity modal -->
+    <div id="logModal" class="modal hidden">
+        <div class="modal-backdrop" data-close="1"></div>
+        <div class="modal-dialog">
+            <div class="modal-head">
+                <h3 id="logModalTitle">Активность клиента</h3>
+                <button class="modal-close" id="logModalClose" aria-label="Закрыть">✕</button>
+            </div>
+            <div class="modal-sub" id="logModalSub"></div>
+            <div class="modal-body" id="logModalBody"></div>
+        </div>
+    </div>
+
+    <!-- Share / connection config modal -->
+    <div id="configModal" class="modal hidden">
+        <div class="modal-backdrop" data-close-config="1"></div>
+        <div class="modal-dialog modal-wide">
+            <div class="modal-head">
+                <h3 id="configModalTitle">Данные для подключения</h3>
+                <button class="modal-close" id="configModalClose" aria-label="Закрыть">✕</button>
+            </div>
+            <div class="modal-sub" id="configModalSub"></div>
+            <div class="modal-body" id="configModalBody"></div>
+            <div class="modal-foot">
+                <button class="btn btn-ghost" id="configModalNew">➕ Создать подключение</button>
+                <button class="btn btn-primary" id="configModalCopyLink">🔗 Копировать vpn:// ссылку</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Install AmneziaWG modal -->
+    <div id="installModal" class="modal hidden">
+        <div class="modal-backdrop" data-close-install="1"></div>
+        <div class="modal-dialog">
+            <div class="modal-head">
+                <h3>Установить AmneziaWG</h3>
+                <button class="modal-close" id="installModalClose" aria-label="Закрыть">✕</button>
+            </div>
+            <div class="modal-sub" id="installModalSub"></div>
+            <div class="modal-body">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>UDP-порт (пусто — случайный)</label>
+                        <input type="number" id="installPort" placeholder="55424" min="1" max="65535">
+                    </div>
+                    <div class="form-group">
+                        <label>Подсеть</label>
+                        <input type="text" id="installSubnet" value="10.8.1.0" placeholder="10.8.1.0">
+                    </div>
+                    <div class="form-group">
+                        <label>Маска</label>
+                        <input type="text" id="installCidr" value="24" placeholder="24">
+                    </div>
+                    <div class="form-group full">
+                        <label>Образ Docker</label>
+                        <input type="text" id="installImage" value="amneziavpn/amnezia-wg:latest" readonly>
+                    </div>
+                </div>
+                <div class="form-message" id="installMessage"></div>
+                <pre class="install-log hidden" id="installLog"></pre>
+            </div>
+            <div class="modal-foot">
+                <button class="btn btn-ghost" id="installModalCancel">Отмена</button>
+                <button class="btn btn-primary" id="installModalRun">Установить</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
