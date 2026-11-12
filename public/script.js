@@ -4,10 +4,13 @@ const API = '/api';
 const REFRESH_INTERVAL = 15000;
 
 const state = {
+  user: null, // { id, username, role }
   servers: [],
-  statuses: {}, // serverId -> collected status
-  statusErrors: {}, // serverId -> error message
+  statuses: {}, // serverId -> collected status (admin)
+  statusErrors: {}, // serverId -> error message (admin)
   pings: {}, // serverId -> ping result
+  proxies: {}, // serverId -> proxy summary (regular users)
+  proxyErrors: {},
   expandedId: null,
   activeTab: 'vpn',
   autoTimer: null,
@@ -15,6 +18,20 @@ const state = {
 };
 
 const el = {
+  // Auth
+  loginScreen: document.getElementById('loginScreen'),
+  appRoot: document.getElementById('appRoot'),
+  loginUsername: document.getElementById('loginUsername'),
+  loginPassword: document.getElementById('loginPassword'),
+  loginMessage: document.getElementById('loginMessage'),
+  loginBtn: document.getElementById('loginBtn'),
+  currentUser: document.getElementById('currentUser'),
+  currentUserRole: document.getElementById('currentUserRole'),
+  logoutBtn: document.getElementById('logoutBtn'),
+  usersBtn: document.getElementById('usersBtn'),
+  brandSub: document.getElementById('brandSub'),
+  dashboardTitle: document.getElementById('dashboardTitle'),
+
   autoRefresh: document.getElementById('autoRefresh'),
   addServerBtn: document.getElementById('addServerBtn'),
   kpiRow: document.getElementById('kpiRow'),
@@ -38,6 +55,7 @@ const el = {
   serverPassword: document.getElementById('serverPassword'),
   serverPrivateKey: document.getElementById('serverPrivateKey'),
   serverPassphrase: document.getElementById('serverPassphrase'),
+  serverVisible: document.getElementById('serverVisible'),
   passwordGroup: document.getElementById('passwordGroup'),
   keyGroup: document.getElementById('keyGroup'),
   passphraseGroup: document.getElementById('passphraseGroup'),
@@ -59,6 +77,14 @@ const el = {
   configModalNew: document.getElementById('configModalNew'),
   configModalCopyLink: document.getElementById('configModalCopyLink'),
 
+  // MTProto proxy modal
+  proxyModal: document.getElementById('proxyModal'),
+  proxyModalTitle: document.getElementById('proxyModalTitle'),
+  proxyModalSub: document.getElementById('proxyModalSub'),
+  proxyModalBody: document.getElementById('proxyModalBody'),
+  proxyModalClose: document.getElementById('proxyModalClose'),
+  proxyModalCopy: document.getElementById('proxyModalCopy'),
+
   // Install AmneziaWG modal
   installModal: document.getElementById('installModal'),
   installModalSub: document.getElementById('installModalSub'),
@@ -70,18 +96,128 @@ const el = {
   installCidr: document.getElementById('installCidr'),
   installMessage: document.getElementById('installMessage'),
   installLog: document.getElementById('installLog'),
+
+  // Users modal
+  usersModal: document.getElementById('usersModal'),
+  usersModalClose: document.getElementById('usersModalClose'),
+  usersList: document.getElementById('usersList'),
+  usersMessage: document.getElementById('usersMessage'),
+  newUserName: document.getElementById('newUserName'),
+  newUserPassword: document.getElementById('newUserPassword'),
+  newUserRole: document.getElementById('newUserRole'),
+  addUserBtn: document.getElementById('addUserBtn'),
 };
+
+function isAdmin() {
+  return !!(state.user && state.user.role === 'admin');
+}
 
 async function api(path, options = {}) {
   const res = await fetch(`${API}${path}`, {
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
     ...options,
   });
   if (res.status === 204) return null;
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(data.error || `HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
   return data;
 }
+
+// --- Authentication bootstrap ----------------------------------------------
+
+async function init() {
+  try {
+    state.user = await api('/auth/me');
+    enterApp();
+  } catch (_) {
+    showLogin();
+  }
+}
+
+function showLogin() {
+  state.user = null;
+  state.servers = [];
+  el.appRoot.classList.add('hidden');
+  el.loginScreen.classList.remove('hidden');
+  el.loginPassword.value = '';
+  el.loginUsername.focus();
+}
+
+function enterApp() {
+  el.loginScreen.classList.add('hidden');
+  el.appRoot.classList.remove('hidden');
+  applyRole();
+  loadServers();
+}
+
+/** Show/hide admin-only controls and adjust copy for the current role. */
+function applyRole() {
+  const admin = isAdmin();
+  el.currentUser.textContent = state.user ? state.user.username : '';
+  el.currentUserRole.textContent = admin ? 'администратор' : 'пользователь';
+  el.currentUserRole.className = `user-chip-role ${admin ? 'role-admin' : 'role-user'}`;
+  document.querySelectorAll('.admin-only').forEach((node) => node.classList.toggle('hidden', !admin));
+  el.brandSub.textContent = admin
+    ? 'Мониторинг VPN-контейнеров, клиентов и MTProto-прокси'
+    : 'Выберите сервер и создайте подключение';
+  el.dashboardTitle.textContent = admin ? 'Серверы' : 'Доступные серверы';
+}
+
+el.loginBtn.addEventListener('click', doLogin);
+el.loginPassword.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') doLogin();
+});
+el.loginUsername.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') el.loginPassword.focus();
+});
+
+async function doLogin() {
+  const username = el.loginUsername.value.trim();
+  const password = el.loginPassword.value;
+  if (!username || !password) {
+    showLoginMessage('Введите логин и пароль.', 'error');
+    return;
+  }
+  el.loginBtn.disabled = true;
+  showLoginMessage('Проверка…', '');
+  try {
+    state.user = await api('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+    });
+    el.loginUsername.value = '';
+    el.loginPassword.value = '';
+    showLoginMessage('', '');
+    enterApp();
+  } catch (err) {
+    showLoginMessage(err.message, 'error');
+  } finally {
+    el.loginBtn.disabled = false;
+  }
+}
+
+function showLoginMessage(text, type) {
+  el.loginMessage.textContent = text || '';
+  el.loginMessage.className = `form-message ${type || ''}`;
+}
+
+async function logout() {
+  try {
+    await api('/auth/logout', { method: 'POST' });
+  } catch (_) {
+    /* ignore */
+  }
+  if (state.autoTimer) clearInterval(state.autoTimer);
+  state.autoTimer = null;
+  showLogin();
+}
+
+el.logoutBtn.addEventListener('click', logout);
 
 // --- Loading / refreshing ---------------------------------------------------
 
@@ -94,13 +230,17 @@ async function loadServers() {
     renderAll();
     await refreshAll();
   } catch (err) {
+    if (err.status === 401) {
+      showLogin();
+      return;
+    }
     el.dashboard.innerHTML = `<div class="error-box">Ошибка загрузки серверов: ${escapeHtml(err.message)}</div>`;
   }
 }
 
 /**
- * Refresh ping + status for every server. Results are painted progressively as
- * each server resolves, so a slow/unreachable host never blocks the others.
+ * Refresh ping (+ status for admins) for every server. Results are painted
+ * progressively as each server resolves, so a slow host never blocks others.
  */
 async function refreshAll() {
   const servers = state.servers.slice();
@@ -109,11 +249,7 @@ async function refreshAll() {
   renderAll();
 }
 
-/**
- * Refresh ping and status of one server independently, re-rendering as soon as
- * each part finishes. When `silent` is set (auto-refresh) the render is skipped
- * if this server is not expanded, to avoid needless DOM work.
- */
+/** Refresh ping and (for admins) status of one server, re-rendering as each part finishes. */
 async function refreshServer(id, { silent = false } = {}) {
   const settle = () => {
     if (silent && id !== state.expandedId) return;
@@ -130,18 +266,31 @@ async function refreshServer(id, { silent = false } = {}) {
       settle();
     });
 
-  const statusP = api(`/servers/${id}/status`)
-    .then((s) => {
-      state.statuses[id] = s;
-      delete state.statusErrors[id];
-      settle();
-    })
-    .catch((err) => {
-      state.statusErrors[id] = err.message;
-      settle();
-    });
+  const statusP = isAdmin()
+    ? api(`/servers/${id}/status`)
+        .then((s) => {
+          state.statuses[id] = s;
+          delete state.statusErrors[id];
+          settle();
+        })
+        .catch((err) => {
+          state.statusErrors[id] = err.message;
+          settle();
+        })
+    : Promise.resolve();
 
   await Promise.all([pingP, statusP]);
+}
+
+/** Load the list of connectable proxies for a server (regular users). */
+async function loadProxies(id) {
+  try {
+    state.proxies[id] = await api(`/servers/${id}/proxies`);
+    delete state.proxyErrors[id];
+  } catch (err) {
+    state.proxyErrors[id] = err.message;
+  }
+  if (id === state.expandedId) renderDetail();
 }
 
 /** Run async `fn` over `items` with limited concurrency. */
@@ -173,6 +322,14 @@ function renderKpi() {
     const ping = state.pings[s.id];
     return ping && ping.alive;
   }).length;
+
+  if (!isAdmin()) {
+    el.kpiRow.innerHTML = [
+      kpi(servers.length, 'Доступных серверов'),
+      kpi(reachable, 'Доступно (ping)', reachable < servers.length ? 'accent-warn' : ''),
+    ].join('');
+    return;
+  }
 
   let runningTotal = 0;
   let containersTotal = 0;
@@ -208,15 +365,17 @@ function kpi(value, label, accent) {
 
 function renderDashboard() {
   if (state.servers.length === 0) {
-    el.dashboard.innerHTML =
-      '<div class="muted" style="grid-column:1/-1">Серверов пока нет. Добавьте первый через «➕ Добавить сервер».</div>';
+    const hint = isAdmin()
+      ? 'Серверов пока нет. Добавьте первый через «➕ Добавить сервер».'
+      : 'Для вас пока нет доступных серверов. Обратитесь к администратору.';
+    el.dashboard.innerHTML = `<div class="muted" style="grid-column:1/-1">${hint}</div>`;
     return;
   }
 
-  el.dashboard.innerHTML = state.servers.map((s) => serverCard(s)).join('');
+  el.dashboard.innerHTML = state.servers.map((s) => (isAdmin() ? adminServerCard(s) : userServerCard(s))).join('');
 }
 
-function serverCard(server) {
+function adminServerCard(server) {
   const id = server.id;
   const active = id === state.expandedId ? ' active' : '';
   const st = state.statuses[id];
@@ -236,6 +395,10 @@ function serverCard(server) {
          ${metric('—', 'Ключи TG')}
        </div>`;
 
+  const visibleBadge = server.visible
+    ? '<span class="pill pill-online">👁 виден пользователям</span>'
+    : '<span class="pill pill-mute">🚫 скрыт</span>';
+
   return `
     <div class="server-card${active}" data-id="${escapeHtml(id)}">
       <div class="server-card-head">
@@ -248,7 +411,34 @@ function serverCard(server) {
       ${metrics}
       <div class="server-card-foot">
         ${pingBadge(ping)}
+        ${visibleBadge}
+      </div>
+      <div class="server-card-foot">
+        <button class="btn btn-ghost" data-action="toggle-visible" data-id="${escapeHtml(id)}">
+          ${server.visible ? '🚫 Скрыть от пользователей' : '👁 Показать пользователям'}
+        </button>
         <button class="btn btn-danger" data-action="remove" data-id="${escapeHtml(id)}">Удалить</button>
+      </div>
+    </div>`;
+}
+
+function userServerCard(server) {
+  const id = server.id;
+  const active = id === state.expandedId ? ' active' : '';
+  const ping = state.pings[id];
+
+  return `
+    <div class="server-card${active}" data-id="${escapeHtml(id)}">
+      <div class="server-card-head">
+        <div>
+          <div class="server-card-title">${escapeHtml(server.name)}</div>
+          <div class="server-card-host">${escapeHtml(server.host)}</div>
+        </div>
+        ${pingBadge(ping)}
+      </div>
+      <div class="server-card-actions">
+        <button class="btn btn-primary btn-sm" data-action="new-awg" data-id="${escapeHtml(id)}">➕ AmneziaWG</button>
+        <button class="btn btn-sm" data-action="new-proxy" data-id="${escapeHtml(id)}">🔗 Прокси</button>
       </div>
     </div>`;
 }
@@ -260,7 +450,7 @@ function metric(value, label) {
   </div>`;
 }
 
-/** Classify a server by the last collected status / error. */
+/** Classify a server by the last collected status / error (admins only). */
 function serverState(server) {
   const id = server.id;
   if (state.statusErrors[id]) return { key: 'offline', label: 'ошибка' };
@@ -296,6 +486,10 @@ function renderDetail() {
   if (!server) {
     el.detail.hidden = true;
     el.detail.innerHTML = '';
+    return;
+  }
+  if (!isAdmin()) {
+    renderUserDetail(server);
     return;
   }
 
@@ -344,11 +538,68 @@ function renderDetail() {
     ${body}`;
 }
 
+/** Detail panel for regular users: the list of connectable proxies. */
+function renderUserDetail(server) {
+  const id = server.id;
+  const ping = state.pings[id];
+  const proxyData = state.proxies[id];
+  const error = state.proxyErrors[id];
+
+  let body;
+  if (error) {
+    body = `<div class="error-box">Не удалось получить список подключений: ${escapeHtml(error)}</div>`;
+  } else if (!proxyData) {
+    body = '<div class="muted"><span class="spinner">Загрузка доступных подключений…</span></div>';
+  } else if (!proxyData.proxies.length) {
+    body =
+      '<div class="proxy-empty">На этом сервере пока нет доступных подключений.<br>Создайте подключение AmneziaWG, если контейнер уже развёрнут администратором.</div>';
+  } else {
+    body = `<div class="proxy-list">${proxyData.proxies.map((p) => renderProxyItem(p)).join('')}</div>`;
+  }
+
+  el.detail.hidden = false;
+  el.detail.innerHTML = `
+    <div class="detail-head">
+      <div>
+        <h2>${escapeHtml(server.name)}</h2>
+        <div class="muted">${escapeHtml(server.host)}</div>
+      </div>
+      <div class="detail-actions">
+        ${pingBadge(ping)}
+        <button class="btn" data-action="refresh-detail">↻ Обновить</button>
+        <button class="btn btn-primary" data-action="new-awg" data-id="${escapeHtml(id)}">➕ Создать подключение AmneziaWG</button>
+        <button class="btn" data-action="new-proxy" data-id="${escapeHtml(id)}">🔗 Подключение к прокси</button>
+      </div>
+    </div>
+    ${body}`;
+}
+
+function renderProxyItem(p) {
+  const isAwg = p.kind === 'awg';
+  const typeLabel = isAwg ? 'AmneziaWG' : 'MTProto';
+  const stateClass = p.running ? ' running' : '';
+  const action = isAwg
+    ? `<button class="btn btn-primary btn-sm" data-action="new-awg" data-container="${escapeHtml(p.name)}">➕ Создать подключение</button>`
+    : `<button class="btn btn-primary btn-sm" data-action="new-proxy" data-name="${escapeHtml(p.name)}">🔗 Подключение к прокси</button>`;
+
+  return `
+    <div class="container-card">
+      <div class="container-head">
+        <h3>${escapeHtml(p.name)}</h3>
+        <span class="badge badge-state${stateClass}">${escapeHtml(p.state)}</span>
+        <span class="badge badge-type">${typeLabel}</span>
+        ${p.port ? `<span class="badge badge-count">порт: ${p.port}</span>` : ''}
+        <span class="container-image">${escapeHtml(p.image)}</span>
+      </div>
+      <div class="server-card-actions">${action}</div>
+    </div>`;
+}
+
 function summaryItem(value, label) {
   return `<div class="summary-item"><span class="value">${escapeHtml(String(value))}</span><span class="label">${escapeHtml(label)}</span></div>`;
 }
 
-// --- VPN containers ---------------------------------------------------------
+// --- VPN containers (admin) -------------------------------------------------
 
 function renderVpn(st) {
   const hasAwg = !!(st.summary && st.summary.hasAwgContainer);
@@ -431,7 +682,7 @@ function renderContainer(c) {
     </div>`;
 }
 
-// --- MTProto proxies --------------------------------------------------------
+// --- MTProto proxies (admin) ------------------------------------------------
 
 function renderMtproto(st) {
   const proxies = st.mtprotoContainers || [];
@@ -479,10 +730,14 @@ function renderKey(key) {
 // --- Dashboard / detail interactions ---------------------------------------
 
 el.dashboard.addEventListener('click', (e) => {
-  const removeBtn = e.target.closest('button[data-action="remove"]');
-  if (removeBtn) {
+  const actionBtn = e.target.closest('button[data-action]');
+  if (actionBtn) {
     e.stopPropagation();
-    removeServer(removeBtn.dataset.id);
+    const action = actionBtn.dataset.action;
+    if (action === 'remove') removeServer(actionBtn.dataset.id);
+    else if (action === 'toggle-visible') toggleVisible(actionBtn.dataset.id);
+    else if (action === 'new-awg') openClientConfig({ serverId: actionBtn.dataset.id, container: 'amnezia-awg', mode: 'new' });
+    else if (action === 'new-proxy') openProxyConfig({ serverId: actionBtn.dataset.id });
     return;
   }
   const card = e.target.closest('.server-card');
@@ -496,14 +751,33 @@ function toggleServer(id) {
     state.activeTab = 'vpn';
   } else {
     state.expandedId = id;
-    // Fetch immediately if we have never seen this server's status.
-    if (!state.statuses[id] && !state.statusErrors[id]) {
-      refreshServer(id);
+    if (isAdmin()) {
+      // Fetch immediately if we have never seen this server's status.
+      if (!state.statuses[id] && !state.statusErrors[id]) {
+        refreshServer(id);
+      }
+    } else if (!state.proxies[id] && !state.proxyErrors[id]) {
+      loadProxies(id);
     }
   }
   renderAll();
   if (state.expandedId) {
     el.detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+}
+
+async function toggleVisible(id) {
+  const server = state.servers.find((s) => s.id === id);
+  if (!server) return;
+  try {
+    const updated = await api(`/servers/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ visible: !server.visible }),
+    });
+    server.visible = updated.visible;
+    renderAll();
+  } catch (err) {
+    window.alert(`Не удалось изменить видимость: ${err.message}`);
   }
 }
 
@@ -548,22 +822,37 @@ el.detail.addEventListener('click', async (e) => {
   const actionBtn = e.target.closest('button[data-action]');
   if (!actionBtn) return;
   const id = state.expandedId;
+  const action = actionBtn.dataset.action;
 
-  if (actionBtn.dataset.action === 'install-awg') {
+  if (action === 'install-awg') {
     openInstallModal();
     return;
   }
 
-  if (actionBtn.dataset.action === 'new-awg-client') {
+  if (action === 'new-awg-client') {
     openClientConfig({ container: actionBtn.dataset.container, mode: 'new' });
     return;
   }
 
-  if (actionBtn.dataset.action === 'refresh-detail') {
+  if (action === 'new-awg') {
+    openClientConfig({ serverId: actionBtn.dataset.id, container: actionBtn.dataset.container || 'amnezia-awg', mode: 'new' });
+    return;
+  }
+
+  if (action === 'new-proxy') {
+    openProxyConfig({ serverId: actionBtn.dataset.id, name: actionBtn.dataset.name });
+    return;
+  }
+
+  if (action === 'refresh-detail') {
     actionBtn.disabled = true;
-    await refreshServer(id);
+    if (isAdmin()) {
+      await refreshServer(id);
+    } else {
+      await Promise.all([refreshServer(id), loadProxies(id)]);
+    }
     renderAll();
-  } else if (actionBtn.dataset.action === 'ping-detail') {
+  } else if (action === 'ping-detail') {
     actionBtn.disabled = true;
     try {
       state.pings[id] = await api(`/servers/${id}/ping`);
@@ -571,7 +860,7 @@ el.detail.addEventListener('click', async (e) => {
       state.pings[id] = { alive: false, error: err.message };
     }
     renderAll();
-  } else if (actionBtn.dataset.action === 'remove') {
+  } else if (action === 'remove') {
     removeServer(id);
   }
 });
@@ -604,6 +893,8 @@ async function removeServer(id) {
     delete state.statuses[id];
     delete state.statusErrors[id];
     delete state.pings[id];
+    delete state.proxies[id];
+    delete state.proxyErrors[id];
     if (state.expandedId === id) state.expandedId = null;
     await loadServers();
   } catch (err) {
@@ -659,6 +950,7 @@ function resetForm() {
   el.serverPrivateKey.value = '';
   el.serverPassphrase.value = '';
   el.serverAuthType.value = 'password';
+  el.serverVisible.checked = false;
   syncAuthFields();
 }
 
@@ -688,6 +980,7 @@ async function saveServer() {
     port: Number(el.serverPort.value) || 22,
     username: el.serverUsername.value.trim(),
     authType: el.serverAuthType.value,
+    visible: el.serverVisible.checked,
   };
 
   if (!payload.host || !payload.username) {
@@ -725,7 +1018,7 @@ async function saveServer() {
 
 el.serverModalSave.addEventListener('click', saveServer);
 
-// --- Client activity modal --------------------------------------------------
+// --- Client activity modal (admin) ------------------------------------------
 
 async function openClientLogs({ id, container, client, endpoint }) {
   const serverId = state.expandedId;
@@ -788,24 +1081,26 @@ el.logModal.querySelector('[data-close]').addEventListener('click', closeLogModa
 // --- Share / connection config modal ----------------------------------------
 
 let currentConfig = null;
+let currentConfigServerId = null;
 
 /**
  * Show the connection data for one AmneziaWG client, exactly like the Amnezia
  * app's "Share" button: the native `.conf` file plus the importable `vpn://`
  * link. With { mode: 'new' } a brand-new client connection is generated.
  */
-async function openClientConfig({ id, client, container, mode }) {
-  const serverId = state.expandedId;
+async function openClientConfig({ serverId, id, client, container, mode }) {
+  const sid = serverId || state.expandedId;
+  currentConfigServerId = sid;
   el.configModal.classList.remove('hidden');
   el.configModalTitle.textContent = 'Данные для подключения';
   el.configModalSub.textContent =
-    `${container || 'amnezia-awg'}${client ? ` · ${client}` : ''}` +
-    (mode === 'new' ? ' · новое подключение' : '');
+    `${container || 'amnezia-awg'}${client ? ` · ${client}` : ''}` + (mode === 'new' ? ' · новое подключение' : '');
   el.configModalBody.innerHTML =
     mode === 'new'
       ? '<div class="muted"><span class="spinner">Генерация ключей и добавление пира…</span></div>'
       : '<div class="muted"><span class="spinner">Загрузка конфигурации…</span></div>';
-  el.configModalNew.classList.toggle('hidden', mode === 'new');
+  // Regular users may only generate their own connection.
+  el.configModalNew.classList.toggle('hidden', mode === 'new' || !isAdmin());
   el.configModalCopyLink.disabled = true;
   currentConfig = null;
 
@@ -815,13 +1110,13 @@ async function openClientConfig({ id, client, container, mode }) {
     if (id) params.set('id', id);
     if (client) params.set('client', client);
     if (mode === 'new') params.set('mode', 'new');
-    const data = await api(`/servers/${serverId}/awg/config?${params.toString()}`);
+    const data = await api(`/servers/${sid}/awg/config?${params.toString()}`);
     currentConfig = data;
     renderConfig(data);
   } catch (err) {
     el.configModalBody.innerHTML = `<div class="error-box">Не удалось получить данные: ${escapeHtml(err.message)}</div>`;
     // Offer to create a new connection when the stored config is unavailable.
-    el.configModalNew.classList.toggle('hidden', mode === 'new');
+    el.configModalNew.classList.toggle('hidden', mode === 'new' || !isAdmin());
   }
 }
 
@@ -875,7 +1170,74 @@ el.configModalCopyLink.addEventListener('click', () => {
 
 el.configModalNew.addEventListener('click', () => {
   const sub = el.configModalSub.textContent.split(' · ')[0];
-  openClientConfig({ container: sub, mode: 'new' });
+  openClientConfig({ serverId: currentConfigServerId || state.expandedId, container: sub, mode: 'new' });
+});
+
+// --- MTProto proxy connection modal (regular users) -------------------------
+
+let currentProxy = null;
+
+async function openProxyConfig({ serverId, name }) {
+  const sid = serverId || state.expandedId;
+  el.proxyModal.classList.remove('hidden');
+  el.proxyModalTitle.textContent = 'Подключение к прокси';
+  el.proxyModalSub.textContent = name ? name : 'MTProto (Telegram)';
+  el.proxyModalBody.innerHTML = '<div class="muted"><span class="spinner">Загрузка данных прокси…</span></div>';
+  el.proxyModalCopy.disabled = true;
+  currentProxy = null;
+
+  try {
+    const params = new URLSearchParams();
+    if (name) params.set('name', name);
+    const data = await api(`/servers/${sid}/mtproto/config?${params.toString()}`);
+    currentProxy = data;
+    renderProxyConfig(data);
+  } catch (err) {
+    el.proxyModalBody.innerHTML = `<div class="error-box">Не удалось получить данные прокси: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderProxyConfig(data) {
+  const rows = [
+    ['Прокси', data.name || '—'],
+    ['Сервер', data.host],
+    ['Порт', data.port != null ? String(data.port) : '—'],
+    ['Домен', data.domain || '—'],
+    ['Secret', data.secret || '—'],
+  ]
+    .map(
+      ([label, value]) =>
+        `<div class="config-row"><span class="config-label">${escapeHtml(label)}</span><span class="config-value">${escapeHtml(String(value))}</span></div>`,
+    )
+    .join('');
+
+  const link = data.tgLink || data.link || '';
+  const linkBlock = link
+    ? `<label class="config-block-label">Ссылка для подключения (Telegram)</label>
+       <div class="config-code">
+         <button class="btn-copy" data-copy="${escapeHtml(link)}">Копировать</button>
+         <code>${escapeHtml(link)}</code>
+       </div>`
+    : '<div class="muted">Секрет прокси не найден — обратитесь к администратору.</div>';
+
+  el.proxyModalBody.innerHTML = `
+    <div class="config-grid">${rows}</div>
+    ${linkBlock}`;
+
+  el.proxyModalCopy.disabled = !link;
+}
+
+function closeProxyModal() {
+  el.proxyModal.classList.add('hidden');
+  el.proxyModalBody.innerHTML = '';
+  currentProxy = null;
+}
+
+el.proxyModalClose.addEventListener('click', closeProxyModal);
+el.proxyModal.querySelector('[data-close-proxy]').addEventListener('click', closeProxyModal);
+el.proxyModalCopy.addEventListener('click', () => {
+  const link = currentProxy && (currentProxy.tgLink || currentProxy.link);
+  if (link) copyText(link, el.proxyModalCopy, '🔗 Копировать ссылку');
 });
 
 // --- Install AmneziaWG modal ------------------------------------------------
@@ -934,11 +1296,141 @@ el.installModalRun.addEventListener('click', async () => {
   }
 });
 
+// --- Users management modal (admin) -----------------------------------------
+
+function openUsersModal() {
+  el.usersMessage.textContent = '';
+  el.usersMessage.className = 'form-message';
+  el.newUserName.value = '';
+  el.newUserPassword.value = '';
+  el.newUserRole.value = 'user';
+  el.usersModal.classList.remove('hidden');
+  loadUsers();
+}
+
+function closeUsersModal() {
+  el.usersModal.classList.add('hidden');
+}
+
+el.usersBtn.addEventListener('click', openUsersModal);
+el.usersModalClose.addEventListener('click', closeUsersModal);
+el.usersModal.querySelector('[data-close-users]').addEventListener('click', closeUsersModal);
+
+async function loadUsers() {
+  el.usersList.innerHTML = '<div class="muted"><span class="spinner">Загрузка…</span></div>';
+  try {
+    const list = await api('/users');
+    renderUsers(list);
+  } catch (err) {
+    el.usersList.innerHTML = `<div class="error-box">Не удалось загрузить пользователей: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderUsers(list) {
+  if (!list.length) {
+    el.usersList.innerHTML = '<div class="muted">Пользователей нет.</div>';
+    return;
+  }
+  el.usersList.innerHTML = list
+    .map((u) => {
+      const isSelf = state.user && u.id === state.user.id;
+      return `
+      <div class="user-row" data-id="${escapeHtml(u.id)}">
+        <div class="user-row-main">
+          <span class="user-row-name">${escapeHtml(u.username)}${isSelf ? ' <span class="user-self">(вы)</span>' : ''}</span>
+        </div>
+        <select class="user-role-select" data-id="${escapeHtml(u.id)}">
+          <option value="user"${u.role === 'user' ? ' selected' : ''}>Пользователь</option>
+          <option value="admin"${u.role === 'admin' ? ' selected' : ''}>Администратор</option>
+        </select>
+        <button class="btn-copy" data-action="user-password" data-id="${escapeHtml(u.id)}">Пароль</button>
+        <button class="btn btn-danger btn-sm" data-action="user-delete" data-id="${escapeHtml(u.id)}">Удалить</button>
+      </div>`;
+    })
+    .join('');
+}
+
+el.usersList.addEventListener('change', async (e) => {
+  const select = e.target.closest('.user-role-select');
+  if (!select) return;
+  try {
+    await api(`/users/${select.dataset.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ role: select.value }),
+    });
+    showUsersMessage('Роль обновлена.', 'success');
+  } catch (err) {
+    showUsersMessage(err.message, 'error');
+    loadUsers();
+  }
+});
+
+el.usersList.addEventListener('click', async (e) => {
+  const btn = e.target.closest('button[data-action]');
+  if (!btn) return;
+  const id = btn.dataset.id;
+
+  if (btn.dataset.action === 'user-delete') {
+    if (!window.confirm('Удалить пользователя?')) return;
+    try {
+      await api(`/users/${id}`, { method: 'DELETE' });
+      showUsersMessage('Пользователь удалён.', 'success');
+      loadUsers();
+    } catch (err) {
+      showUsersMessage(err.message, 'error');
+    }
+    return;
+  }
+
+  if (btn.dataset.action === 'user-password') {
+    const password = window.prompt('Новый пароль (минимум 4 символа):');
+    if (!password) return;
+    try {
+      await api(`/users/${id}`, { method: 'PUT', body: JSON.stringify({ password }) });
+      showUsersMessage('Пароль обновлён.', 'success');
+    } catch (err) {
+      showUsersMessage(err.message, 'error');
+    }
+  }
+});
+
+function showUsersMessage(text, type) {
+  el.usersMessage.textContent = text || '';
+  el.usersMessage.className = `form-message ${type || ''}`;
+}
+
+el.addUserBtn.addEventListener('click', async () => {
+  const username = el.newUserName.value.trim();
+  const password = el.newUserPassword.value;
+  const role = el.newUserRole.value;
+  if (!username || !password) {
+    showUsersMessage('Укажите логин и пароль.', 'error');
+    return;
+  }
+  el.addUserBtn.disabled = true;
+  try {
+    await api('/users', { method: 'POST', body: JSON.stringify({ username, password, role }) });
+    el.newUserName.value = '';
+    el.newUserPassword.value = '';
+    el.newUserRole.value = 'user';
+    showUsersMessage('Пользователь добавлен.', 'success');
+    loadUsers();
+  } catch (err) {
+    showUsersMessage(err.message, 'error');
+  } finally {
+    el.addUserBtn.disabled = false;
+  }
+});
+
+// --- Global keyboard --------------------------------------------------------
+
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (!el.logModal.classList.contains('hidden')) closeLogModal();
   else if (!el.configModal.classList.contains('hidden')) closeConfigModal();
+  else if (!el.proxyModal.classList.contains('hidden')) closeProxyModal();
   else if (!el.installModal.classList.contains('hidden')) closeInstallModal();
+  else if (!el.usersModal.classList.contains('hidden')) closeUsersModal();
   else if (!el.serverModal.classList.contains('hidden')) closeServerModal();
 });
 
@@ -949,7 +1441,7 @@ function setAutoRefresh(on) {
   state.autoTimer = null;
   if (on) {
     state.autoTimer = setInterval(() => {
-      if (state.servers.length) refreshAll();
+      if (state.user && state.servers.length) refreshAll();
     }, REFRESH_INTERVAL);
   }
 }
@@ -993,4 +1485,4 @@ function escapeHtml(str) {
 
 syncAuthFields();
 setAutoRefresh(el.autoRefresh.checked);
-loadServers();
+init();

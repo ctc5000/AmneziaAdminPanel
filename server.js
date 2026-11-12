@@ -10,7 +10,9 @@ require('dotenv').config({ path: path.join(__dirname, '.env') });
 const express = require('express');
 
 const store = require('./src/store');
-const { collectServerStatus, collectClientLogs } = require('./src/collect');
+const users = require('./src/users');
+const auth = require('./src/auth');
+const { collectServerStatus, collectClientLogs, collectProxyStatus, getMtprotoConfig } = require('./src/collect');
 const history = require('./src/history');
 const { pingHost } = require('./src/ping');
 const { installAwgContainer, getAwgShare, getAwgState } = require('./src/awg');
@@ -18,18 +20,126 @@ const { installAwgContainer, getAwgShare, getAwgState } = require('./src/awg');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Ensure at least one admin exists before serving any request.
+users.ensureAdmin();
+
 app.use(express.json({ limit: '256kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// --- Servers CRUD -----------------------------------------------------------
+// Resolve the current user from the session cookie (never rejects).
+app.use(auth.attachUser(users));
+
+// --- Helpers ----------------------------------------------------------------
+
+/**
+ * Whether `user` is allowed to reach the given server. Admins see everything;
+ * regular users only see servers an admin marked as visible.
+ */
+function canAccessServer(user, server) {
+  if (!user || !server) return false;
+  if (user.role === 'admin') return true;
+  return Boolean(server.visible);
+}
+
+/** Load a server by id only when the current user may access it. */
+function loadAccessibleServer(req, res) {
+  const server = store.getServer(req.params.id);
+  if (!server) {
+    res.status(404).json({ error: 'server not found' });
+    return null;
+  }
+  if (!canAccessServer(req.user, server)) {
+    res.status(403).json({ error: 'access to this server is not allowed' });
+    return null;
+  }
+  return server;
+}
+
+// --- Auth -------------------------------------------------------------------
+
+app.get('/api/auth/me', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'authentication required' });
+  res.json(users.toPublicUser(req.user));
+});
+
+app.post('/api/auth/login', (req, res) => {
+  const { username, password } = req.body || {};
+  const user = users.getUserByUsername(username);
+  if (!user || !users.verifyPassword(password, user.passwordHash)) {
+    return res.status(401).json({ error: 'invalid username or password' });
+  }
+  const sid = auth.createSession(user.id);
+  auth.setSessionCookie(res, sid);
+  res.json(users.toPublicUser(user));
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  auth.destroySession(req.sessionId);
+  auth.clearSessionCookie(res);
+  res.status(204).end();
+});
+
+// Everything below this line requires an authenticated user.
+app.use('/api', (req, res, next) => {
+  // `/api/health` is intentionally left public.
+  if (req.path === '/health') return next();
+  return auth.requireAuth(req, res, next);
+});
+
+// --- Users (admin only) -----------------------------------------------------
+
+app.get('/api/users', auth.requireAdmin, (req, res) => {
+  res.json(users.listUsers().map(users.toPublicUser));
+});
+
+app.post('/api/users', auth.requireAdmin, (req, res) => {
+  const { username, password, role } = req.body || {};
+  try {
+    const user = users.addUser({ username, password, role });
+    res.status(201).json(users.toPublicUser(user));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.put('/api/users/:id', auth.requireAdmin, (req, res) => {
+  const target = users.getUser(req.params.id);
+  if (!target) return res.status(404).json({ error: 'user not found' });
+
+  const patch = req.body || {};
+  // Protect against self-lockout: an admin cannot demote the last admin.
+  if (patch.role && patch.role !== 'admin' && target.role === 'admin' && users.countAdmins() <= 1) {
+    return res.status(400).json({ error: 'cannot demote the last admin' });
+  }
+  try {
+    const updated = users.updateUser(req.params.id, patch);
+    res.json(users.toPublicUser(updated));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/users/:id', auth.requireAdmin, (req, res) => {
+  const target = users.getUser(req.params.id);
+  if (!target) return res.status(404).json({ error: 'user not found' });
+  if (target.role === 'admin' && users.countAdmins() <= 1) {
+    return res.status(400).json({ error: 'cannot remove the last admin' });
+  }
+  users.removeUser(req.params.id);
+  res.status(204).end();
+});
+
+// --- Servers CRUD (admin only) ----------------------------------------------
 
 app.get('/api/servers', (req, res) => {
-  res.json(store.listServers().map(store.toPublic));
+  const all = store.listServers();
+  const visible = req.user.role === 'admin' ? all : all.filter((s) => s.visible);
+  res.json(visible.map(store.toPublic));
 });
 
 // Ping an arbitrary host (used to preview latency before a server is added).
 // Registered before `/api/servers/:id/...` so "ping" is not read as an id.
-app.get('/api/servers/ping', async (req, res) => {
+app.get('/api/servers/ping', auth.requireAdmin, async (req, res) => {
   const host = (req.query && req.query.host) || '';
   if (!host) return res.status(400).json({ error: 'host is required' });
   try {
@@ -40,8 +150,8 @@ app.get('/api/servers/ping', async (req, res) => {
   }
 });
 
-app.post('/api/servers', (req, res) => {
-  const { name, host, port, username, authType, password, privateKey, passphrase } = req.body || {};
+app.post('/api/servers', auth.requireAdmin, (req, res) => {
+  const { name, host, port, username, authType, password, privateKey, passphrase, visible } = req.body || {};
 
   if (!host || !username) {
     return res.status(400).json({ error: 'host and username are required' });
@@ -63,28 +173,29 @@ app.post('/api/servers', (req, res) => {
     password,
     privateKey,
     passphrase,
+    visible,
   });
   res.status(201).json(store.toPublic(server));
 });
 
-app.put('/api/servers/:id', (req, res) => {
+app.put('/api/servers/:id', auth.requireAdmin, (req, res) => {
   const updated = store.updateServer(req.params.id, req.body || {});
   if (!updated) return res.status(404).json({ error: 'server not found' });
   res.json(store.toPublic(updated));
 });
 
-app.delete('/api/servers/:id', (req, res) => {
+app.delete('/api/servers/:id', auth.requireAdmin, (req, res) => {
   const ok = store.removeServer(req.params.id);
   if (!ok) return res.status(404).json({ error: 'server not found' });
   history.clearServer(req.params.id);
   res.status(204).end();
 });
 
-// --- Ping -------------------------------------------------------------------
+// --- Ping (any authenticated user with access) ------------------------------
 
 app.get('/api/servers/:id/ping', async (req, res) => {
-  const server = store.getServer(req.params.id);
-  if (!server) return res.status(404).json({ error: 'server not found' });
+  const server = loadAccessibleServer(req, res);
+  if (!server) return;
 
   try {
     const result = await pingHost(server.host, { count: Number(req.query.count) || 4 });
@@ -94,9 +205,9 @@ app.get('/api/servers/:id/ping', async (req, res) => {
   }
 });
 
-// --- Status -----------------------------------------------------------------
+// --- Status (admin only — full monitoring details) --------------------------
 
-app.get('/api/servers/:id/status', async (req, res) => {
+app.get('/api/servers/:id/status', auth.requireAdmin, async (req, res) => {
   const server = store.getServer(req.params.id);
   if (!server) return res.status(404).json({ error: 'server not found' });
 
@@ -109,9 +220,23 @@ app.get('/api/servers/:id/status', async (req, res) => {
   }
 });
 
-// --- Client activity --------------------------------------------------------
+// --- Proxy summary (regular users: what they can connect to) ----------------
 
-app.get('/api/servers/:id/logs', async (req, res) => {
+app.get('/api/servers/:id/proxies', async (req, res) => {
+  const server = loadAccessibleServer(req, res);
+  if (!server) return;
+
+  try {
+    const result = await collectProxyStatus(server);
+    res.json(result);
+  } catch (err) {
+    res.status(502).json({ error: err.message || 'failed to collect proxy status' });
+  }
+});
+
+// --- Client activity (admin only) -------------------------------------------
+
+app.get('/api/servers/:id/logs', auth.requireAdmin, async (req, res) => {
   const server = store.getServer(req.params.id);
   if (!server) return res.status(404).json({ error: 'server not found' });
 
@@ -143,7 +268,7 @@ app.get('/api/servers/:id/logs', async (req, res) => {
 // --- AmneziaWG --------------------------------------------------------------
 
 // Install the AmneziaWG container on a server that does not have one yet.
-app.post('/api/servers/:id/install-awg', async (req, res) => {
+app.post('/api/servers/:id/install-awg', auth.requireAdmin, async (req, res) => {
   const server = store.getServer(req.params.id);
   if (!server) return res.status(404).json({ error: 'server not found' });
 
@@ -161,11 +286,11 @@ app.post('/api/servers/:id/install-awg', async (req, res) => {
 });
 
 // Connection data for the Amnezia VPN app (native .conf + vpn:// share link),
-// mirroring the app's "Share" action. Fetched on demand so credentials are not
-// returned by the periodic status refresh.
+// mirroring the app's "Share" action. Available to admins and to regular users
+// (who may create their own connection) for servers they can access.
 app.get('/api/servers/:id/awg/config', async (req, res) => {
-  const server = store.getServer(req.params.id);
-  if (!server) return res.status(404).json({ error: 'server not found' });
+  const server = loadAccessibleServer(req, res);
+  if (!server) return;
 
   const { container, id, client, clientName, clientIp, mode, dns1, dns2 } = req.query || {};
   try {
@@ -185,9 +310,23 @@ app.get('/api/servers/:id/awg/config', async (req, res) => {
   }
 });
 
+// MTProto proxy connection link (Telegram). Regular users use this to "create a
+// connection" to a proxy that is already deployed on the server.
+app.get('/api/servers/:id/mtproto/config', async (req, res) => {
+  const server = loadAccessibleServer(req, res);
+  if (!server) return;
+
+  try {
+    const result = await getMtprotoConfig(server, { name: (req.query && req.query.name) || '' });
+    res.json(result);
+  } catch (err) {
+    res.status(502).json({ error: err.message || 'failed to read MTProto proxy config' });
+  }
+});
+
 // Lightweight AWG state (obfuscation params + server public key), used to
 // populate the install dialog defaults.
-app.get('/api/servers/:id/awg/state', async (req, res) => {
+app.get('/api/servers/:id/awg/state', auth.requireAdmin, async (req, res) => {
   const server = store.getServer(req.params.id);
   if (!server) return res.status(404).json({ error: 'server not found' });
 

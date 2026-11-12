@@ -8,39 +8,70 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
-    <header class="topbar">
-        <div class="brand">
-            <span class="brand-logo">🛡️</span>
-            <div>
+    <!-- Login screen -->
+    <div id="loginScreen" class="login-screen hidden">
+        <div class="login-card">
+            <div class="login-brand">
+                <span class="brand-logo">🛡️</span>
                 <div class="brand-title">Amnezia VPN Control Panel</div>
-                <div class="brand-sub">Мониторинг VPN-контейнеров, клиентов и MTProto-прокси</div>
             </div>
+            <p class="login-sub">Войдите, чтобы продолжить</p>
+            <div class="form-grid">
+                <div class="form-group full">
+                    <label>Логин</label>
+                    <input type="text" id="loginUsername" autocomplete="username" placeholder="admin">
+                </div>
+                <div class="form-group full">
+                    <label>Пароль</label>
+                    <input type="password" id="loginPassword" autocomplete="current-password" placeholder="••••••••">
+                </div>
+            </div>
+            <div class="form-message" id="loginMessage"></div>
+            <button class="btn btn-primary login-btn" id="loginBtn">Войти</button>
         </div>
-        <div class="topbar-actions">
-            <label class="switch-label" title="Автообновление статуса и пинга">
-                <input type="checkbox" id="autoRefresh" checked>
-                <span>Автообновление (15с)</span>
-            </label>
-            <button class="btn btn-primary" id="addServerBtn">➕ Добавить сервер</button>
-        </div>
-    </header>
+    </div>
 
-    <main class="layout">
-        <section class="kpi-row" id="kpiRow"></section>
+    <div id="appRoot" class="app-root hidden">
+        <header class="topbar">
+            <div class="brand">
+                <span class="brand-logo">🛡️</span>
+                <div>
+                    <div class="brand-title">Amnezia VPN Control Panel</div>
+                    <div class="brand-sub" id="brandSub">Мониторинг VPN-контейнеров, клиентов и MTProto-прокси</div>
+                </div>
+            </div>
+            <div class="topbar-actions">
+                <label class="switch-label" title="Автообновление статуса и пинга">
+                    <input type="checkbox" id="autoRefresh" checked>
+                    <span>Автообновление (15с)</span>
+                </label>
+                <button class="btn btn-primary admin-only hidden" id="addServerBtn">➕ Добавить сервер</button>
+                <button class="btn btn-ghost admin-only hidden" id="usersBtn">👥 Пользователи</button>
+                <div class="user-chip">
+                    <span class="user-chip-name" id="currentUser"></span>
+                    <span class="user-chip-role" id="currentUserRole"></span>
+                    <button class="btn-copy" id="logoutBtn" title="Выйти">Выйти</button>
+                </div>
+            </div>
+        </header>
 
-        <section class="dashboard-head">
-            <h2>Серверы</h2>
-            <button class="btn btn-ghost" id="refreshAllBtn">↻ Обновить всё</button>
-        </section>
+        <main class="layout">
+            <section class="kpi-row" id="kpiRow"></section>
 
-        <section class="dashboard" id="dashboard">
-            <div class="muted">Загрузка списка серверов…</div>
-        </section>
+            <section class="dashboard-head">
+                <h2 id="dashboardTitle">Серверы</h2>
+                <button class="btn btn-ghost" id="refreshAllBtn">↻ Обновить всё</button>
+            </section>
 
-        <section class="detail" id="detail" hidden></section>
-    </main>
+            <section class="dashboard" id="dashboard">
+                <div class="muted">Загрузка списка серверов…</div>
+            </section>
 
-    <!-- Add / edit server modal -->
+            <section class="detail" id="detail" hidden></section>
+        </main>
+    </div>
+
+    <!-- Add / edit server modal (admin) -->
     <div id="serverModal" class="modal hidden">
         <div class="modal-backdrop" data-close-server="1"></div>
         <div class="modal-dialog">
@@ -89,6 +120,12 @@
                         <label>Пароль ключа (необязательно)</label>
                         <input type="password" id="serverPassphrase" placeholder="">
                     </div>
+                    <div class="form-group full">
+                        <label class="switch-label" title="Показывать сервер обычным пользователям">
+                            <input type="checkbox" id="serverVisible">
+                            <span>Показывать этот сервер пользователям</span>
+                        </label>
+                    </div>
                 </div>
                 <div class="form-message" id="formMessage"></div>
             </div>
@@ -129,6 +166,22 @@
         </div>
     </div>
 
+    <!-- MTProto proxy connection modal (regular users) -->
+    <div id="proxyModal" class="modal hidden">
+        <div class="modal-backdrop" data-close-proxy="1"></div>
+        <div class="modal-dialog modal-wide">
+            <div class="modal-head">
+                <h3 id="proxyModalTitle">Подключение к прокси</h3>
+                <button class="modal-close" id="proxyModalClose" aria-label="Закрыть">✕</button>
+            </div>
+            <div class="modal-sub" id="proxyModalSub"></div>
+            <div class="modal-body" id="proxyModalBody"></div>
+            <div class="modal-foot">
+                <button class="btn btn-primary" id="proxyModalCopy">🔗 Копировать ссылку</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Install AmneziaWG modal -->
     <div id="installModal" class="modal hidden">
         <div class="modal-backdrop" data-close-install="1"></div>
@@ -163,6 +216,43 @@
             <div class="modal-foot">
                 <button class="btn btn-ghost" id="installModalCancel">Отмена</button>
                 <button class="btn btn-primary" id="installModalRun">Установить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Users management modal (admin) -->
+    <div id="usersModal" class="modal hidden">
+        <div class="modal-backdrop" data-close-users="1"></div>
+        <div class="modal-dialog modal-wide">
+            <div class="modal-head">
+                <h3>Пользователи</h3>
+                <button class="modal-close" id="usersModalClose" aria-label="Закрыть">✕</button>
+            </div>
+            <div class="modal-sub">Управление доступом: администраторы видят всё, пользователи — только видимые серверы.</div>
+            <div class="modal-body">
+                <div class="users-list" id="usersList"></div>
+                <div class="users-form">
+                    <h4>Добавить пользователя</h4>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label>Логин</label>
+                            <input type="text" id="newUserName" placeholder="user1">
+                        </div>
+                        <div class="form-group">
+                            <label>Пароль</label>
+                            <input type="password" id="newUserPassword" placeholder="••••••••">
+                        </div>
+                        <div class="form-group">
+                            <label>Роль</label>
+                            <select id="newUserRole">
+                                <option value="user">Пользователь</option>
+                                <option value="admin">Администратор</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-message" id="usersMessage"></div>
+                    <button class="btn btn-primary" id="addUserBtn">➕ Добавить</button>
+                </div>
             </div>
         </div>
     </div>

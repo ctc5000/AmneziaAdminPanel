@@ -55,6 +55,9 @@ function addServer(input) {
     password: input.authType === 'key' ? null : input.password || null,
     privateKey: input.authType === 'key' ? input.privateKey || null : null,
     passphrase: input.authType === 'key' ? input.passphrase || null : null,
+    // Whether regular users may see this server in their dashboard. New servers
+    // are hidden by default so an admin opts in explicitly.
+    visible: input.visible === undefined ? false : Boolean(input.visible),
     createdAt: new Date().toISOString(),
   };
   load().push(server);
@@ -65,10 +68,11 @@ function addServer(input) {
 function updateServer(id, patch) {
   const server = getServer(id);
   if (!server) return null;
-  const allowed = ['name', 'host', 'port', 'username', 'authType', 'password', 'privateKey', 'passphrase'];
+  const allowed = ['name', 'host', 'port', 'username', 'authType', 'password', 'privateKey', 'passphrase', 'visible'];
   for (const key of allowed) {
     if (patch[key] !== undefined) server[key] = patch[key];
   }
+  server.visible = Boolean(server.visible);
   if (server.authType === 'password') {
     server.privateKey = null;
     server.passphrase = null;
