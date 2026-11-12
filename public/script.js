@@ -21,10 +21,20 @@ const el = {
   // Auth
   loginScreen: document.getElementById('loginScreen'),
   appRoot: document.getElementById('appRoot'),
+  loginForm: document.getElementById('loginForm'),
+  loginSub: document.getElementById('loginSub'),
   loginUsername: document.getElementById('loginUsername'),
   loginPassword: document.getElementById('loginPassword'),
   loginMessage: document.getElementById('loginMessage'),
   loginBtn: document.getElementById('loginBtn'),
+  showRegister: document.getElementById('showRegister'),
+  registerForm: document.getElementById('registerForm'),
+  registerUsername: document.getElementById('registerUsername'),
+  registerPassword: document.getElementById('registerPassword'),
+  registerPassword2: document.getElementById('registerPassword2'),
+  registerMessage: document.getElementById('registerMessage'),
+  registerBtn: document.getElementById('registerBtn'),
+  showLogin: document.getElementById('showLogin'),
   currentUser: document.getElementById('currentUser'),
   currentUserRole: document.getElementById('currentUserRole'),
   logoutBtn: document.getElementById('logoutBtn'),
@@ -145,6 +155,14 @@ function showLogin() {
   el.appRoot.classList.add('hidden');
   el.loginScreen.classList.remove('hidden');
   el.loginPassword.value = '';
+  el.loginUsername.value = '';
+  // Always return the card to the sign-in view.
+  el.registerForm.classList.add('hidden');
+  el.loginForm.classList.remove('hidden');
+  el.loginBtn.classList.remove('hidden');
+  el.loginMessage.classList.remove('hidden');
+  el.loginSub.textContent = 'Войдите, чтобы продолжить';
+  showLoginMessage('', '');
   el.loginUsername.focus();
 }
 
@@ -176,6 +194,25 @@ el.loginUsername.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') el.loginPassword.focus();
 });
 
+el.showRegister.addEventListener('click', (e) => {
+  e.preventDefault();
+  showRegisterForm();
+});
+el.showLogin.addEventListener('click', (e) => {
+  e.preventDefault();
+  showLoginForm();
+});
+el.registerBtn.addEventListener('click', doRegister);
+el.registerPassword2.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') doRegister();
+});
+el.registerUsername.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') el.registerPassword.focus();
+});
+el.registerPassword.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') el.registerPassword2.focus();
+});
+
 async function doLogin() {
   const username = el.loginUsername.value.trim();
   const password = el.loginPassword.value;
@@ -204,6 +241,74 @@ async function doLogin() {
 function showLoginMessage(text, type) {
   el.loginMessage.textContent = text || '';
   el.loginMessage.className = `form-message ${type || ''}`;
+}
+
+function showRegisterMessage(text, type) {
+  el.registerMessage.textContent = text || '';
+  el.registerMessage.className = `form-message ${type || ''}`;
+}
+
+/** Switch the auth card to the sign-up form. */
+function showRegisterForm() {
+  el.loginForm.classList.add('hidden');
+  el.loginBtn.classList.add('hidden');
+  el.loginMessage.classList.add('hidden');
+  el.loginSub.textContent = 'Создание аккаунта';
+  el.registerForm.classList.remove('hidden');
+  el.registerMessage.classList.remove('hidden');
+  el.registerMessage.textContent = '';
+  el.registerMessage.className = 'form-message';
+  el.registerUsername.focus();
+}
+
+/** Switch the auth card back to the sign-in form. */
+function showLoginForm() {
+  el.registerForm.classList.add('hidden');
+  el.loginForm.classList.remove('hidden');
+  el.loginBtn.classList.remove('hidden');
+  el.loginMessage.classList.remove('hidden');
+  el.loginSub.textContent = 'Войдите, чтобы продолжить';
+  el.registerPassword.value = '';
+  el.registerPassword2.value = '';
+  el.loginUsername.focus();
+}
+
+async function doRegister() {
+  const username = el.registerUsername.value.trim();
+  const password = el.registerPassword.value;
+  const password2 = el.registerPassword2.value;
+
+  if (!username || !password) {
+    showRegisterMessage('Введите логин и пароль.', 'error');
+    return;
+  }
+  if (password.length < 4) {
+    showRegisterMessage('Пароль должен содержать минимум 4 символа.', 'error');
+    return;
+  }
+  if (password !== password2) {
+    showRegisterMessage('Пароли не совпадают.', 'error');
+    return;
+  }
+
+  el.registerBtn.disabled = true;
+  showRegisterMessage('Создание аккаунта…', '');
+  try {
+    // Successful registration also logs the user in (session cookie is set).
+    state.user = await api('/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+    });
+    el.registerUsername.value = '';
+    el.registerPassword.value = '';
+    el.registerPassword2.value = '';
+    showRegisterMessage('', '');
+    enterApp();
+  } catch (err) {
+    showRegisterMessage(err.message, 'error');
+  } finally {
+    el.registerBtn.disabled = false;
+  }
 }
 
 async function logout() {

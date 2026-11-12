@@ -26,9 +26,9 @@ const SCRYPT_KEYLEN = 64;
 const USERNAME_RE = /^[a-zA-Z0-9._-]{3,32}$/;
 
 let cache = null;
+let cacheMtime = 0;
 
-function load() {
-  if (cache) return cache;
+function readFromDisk() {
   try {
     cache = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
     if (!Array.isArray(cache)) cache = [];
@@ -38,9 +38,35 @@ function load() {
   return cache;
 }
 
+/**
+ * Load the users, re-reading the file when it changed on disk. This lets an
+ * administrator assign roles or add accounts by editing data/users.json
+ * directly — the change is picked up on the next request (no restart needed).
+ */
+function load() {
+  let stat = null;
+  try {
+    stat = fs.statSync(USERS_FILE);
+  } catch (_) {
+    stat = null;
+  }
+  const mtime = stat ? stat.mtimeMs : 0;
+  const fileChanged = stat ? mtime !== cacheMtime : cacheMtime !== 0;
+  if (cache === null || fileChanged) {
+    readFromDisk();
+    cacheMtime = mtime;
+  }
+  return cache;
+}
+
 function save() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.writeFileSync(USERS_FILE, JSON.stringify(cache, null, 2), { mode: 0o600 });
+  try {
+    cacheMtime = fs.statSync(USERS_FILE).mtimeMs;
+  } catch (_) {
+    cacheMtime = 0;
+  }
 }
 
 // --- Password hashing -------------------------------------------------------
@@ -135,6 +161,20 @@ function removeUser(id) {
   return true;
 }
 
+/**
+ * Self-service registration. Unlike addUser it NEVER honours a requested role:
+ * every self-registered account starts as a regular 'user'. Roles are then
+ * assigned by an administrator (via the Users dialog or by editing
+ * data/users.json directly).
+ */
+function registerUser(input) {
+  const password = String((input && input.password) || '');
+  if (password.length < 4) {
+    throw new Error('password must be at least 4 characters');
+  }
+  return addUser({ username: input && input.username, password, role: 'user' });
+}
+
 /** Number of admins currently registered (used to protect the last admin). */
 function countAdmins() {
   return load().filter((u) => u.role === 'admin').length;
@@ -186,6 +226,7 @@ module.exports = {
   getUser,
   getUserByUsername,
   addUser,
+  registerUser,
   updateUser,
   removeUser,
   countAdmins,

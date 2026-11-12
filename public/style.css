@@ -1019,6 +1019,35 @@ textarea {
     padding: 11px 16px;
 }
 
+.login-toggle {
+    text-align: center;
+    margin: 16px 0 0;
+    font-size: 0.85rem;
+    color: var(--text-mute);
+}
+
+.login-toggle a {
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.login-toggle a:hover {
+    text-decoration: underline;
+}
+
+.login-hint {
+    margin: 12px 0 0;
+    font-size: 0.78rem;
+    line-height: 1.45;
+    color: var(--text-mute);
+    text-align: center;
+}
+
+.login-hint strong {
+    color: var(--text-dim);
+}
+
 /* User chip ---------------------------------------------------------------- */
 .user-chip {
     display: flex;

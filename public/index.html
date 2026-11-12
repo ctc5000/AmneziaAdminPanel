@@ -15,8 +15,10 @@
                 <span class="brand-logo">🛡️</span>
                 <div class="brand-title">Amnezia VPN Control Panel</div>
             </div>
-            <p class="login-sub">Войдите, чтобы продолжить</p>
-            <div class="form-grid">
+            <p class="login-sub" id="loginSub">Войдите, чтобы продолжить</p>
+
+            <!-- Sign in -->
+            <div class="form-grid" id="loginForm">
                 <div class="form-group full">
                     <label>Логин</label>
                     <input type="text" id="loginUsername" autocomplete="username" placeholder="admin">
@@ -28,6 +30,29 @@
             </div>
             <div class="form-message" id="loginMessage"></div>
             <button class="btn btn-primary login-btn" id="loginBtn">Войти</button>
+            <p class="login-toggle">Нет аккаунта? <a href="#" id="showRegister">Зарегистрироваться</a></p>
+
+            <!-- Sign up -->
+            <div class="hidden" id="registerForm">
+                <div class="form-grid">
+                    <div class="form-group full">
+                        <label>Логин</label>
+                        <input type="text" id="registerUsername" autocomplete="username" placeholder="user1">
+                    </div>
+                    <div class="form-group full">
+                        <label>Пароль</label>
+                        <input type="password" id="registerPassword" autocomplete="new-password" placeholder="Минимум 4 символа">
+                    </div>
+                    <div class="form-group full">
+                        <label>Пароль ещё раз</label>
+                        <input type="password" id="registerPassword2" autocomplete="new-password" placeholder="Повторите пароль">
+                    </div>
+                </div>
+                <div class="form-message" id="registerMessage"></div>
+                <button class="btn btn-primary login-btn" id="registerBtn">Создать аккаунт</button>
+                <p class="login-toggle">Уже есть аккаунт? <a href="#" id="showLogin">Войти</a></p>
+                <p class="login-hint">Новый аккаунт получает роль <strong>пользователя</strong>. Права выдаёт администратор.</p>
+            </div>
         </div>
     </div>
 

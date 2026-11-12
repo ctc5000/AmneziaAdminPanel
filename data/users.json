@@ -1,0 +1,9 @@
+[
+  {
+    "id": "7974d86d-1e90-4154-985b-d4c3f7356fb9",
+    "username": "admin",
+    "passwordHash": "scrypt:8456d68bea098ff79685a20869db44a8:01fc81fb84168bee3a35d959e7776114b72bb98b2296384cba9f1c09ee8201242f728c4a62ffd81f866659ea4bb594d60c608ebcb485aecd1769ad8f6d6baa61",
+    "role": "admin",
+    "createdAt": "2026-11-12T10:13:22.617Z"
+  }
+]

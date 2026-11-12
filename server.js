@@ -73,6 +73,20 @@ app.post('/api/auth/login', (req, res) => {
   res.json(users.toPublicUser(user));
 });
 
+// Self-service registration. The role is ALWAYS 'user' — privileges are granted
+// by an administrator afterwards (Users dialog, or by editing data/users.json).
+app.post('/api/auth/register', (req, res) => {
+  const { username, password } = req.body || {};
+  try {
+    const user = users.registerUser({ username, password });
+    const sid = auth.createSession(user.id);
+    auth.setSessionCookie(res, sid);
+    res.status(201).json(users.toPublicUser(user));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 app.post('/api/auth/logout', (req, res) => {
   auth.destroySession(req.sessionId);
   auth.clearSessionCookie(res);
