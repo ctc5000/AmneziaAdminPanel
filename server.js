@@ -1,6 +1,12 @@
 'use strict';
 
 const path = require('path');
+
+// Load variables from a local .env file (PORT, etc.) if present.
+// The path is resolved against the project root (not the current working
+// directory) so it also works when started via systemd/pm2/docker.
+// Must run before any other module reads process.env.
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 const express = require('express');
 
 const store = require('./src/store');
