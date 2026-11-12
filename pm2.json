@@ -1,0 +1,10 @@
+{
+  "apps": [
+    {
+      "name": "Amnezia",
+      "script": "npm",
+      "args": "run dev",
+      "watch": false
+    }
+  ]
+}
